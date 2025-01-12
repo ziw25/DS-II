@@ -1,0 +1,448 @@
+---
+title: "Assignment 2 - Resampling Methods"
+author: "Ziwen Zhang"
+date: "2023-06-07"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Question 1
+
+In Assignment 1, you have built classifiers including logistic regression, LDA, QDA and k-Nearest Neighbor algorithm with K=1 to 10. In this question do the following using the same breast cancer data as in Assignment 1 (also see below):
+
+### Data description: 
+Clinical cases of breast cancer tissue samples arrived periodically at Pathology lab at the University of Wisconsin-Madison. The following are the attributes of the data.
+
+```{r, warning=FALSE}
+# Specify the file path of the .DATA file
+file_path <- "D:\\Cornell\\Data_Science_II\\Assignment\\A2\\breast-cancer-wisconsin.data"
+
+# Read the .DATA file
+data <- read.csv(file_path, header = F)
+
+# Name columns
+colnames(data) <- c("sample_code", "clump_thickness", "cell_size", "cell_shape", "marginal_adhesion", "single_epi", "bare_nuclei", "bland_chromatin","normal_nucleoli", "mitoses", "Class")
+
+# change character to numeric
+data$bare_nuclei <- as.numeric(data$bare_nuclei)
+
+# replace missing value with mean
+data$bare_nuclei <- ifelse(data$bare_nuclei == "?", NA, data$bare_nuclei)
+
+mean <- round(mean(data$bare_nuclei, na.rm = T))
+
+data$bare_nuclei <- ifelse(is.na(data$bare_nuclei), mean, data$bare_nuclei)
+
+# denote the class with zero and one
+data$Class <- ifelse(data$Class == 2, 0, 1)
+
+# drop the id column
+library(tidyverse)
+data <- data %>%
+  dplyr::select(-`sample_code`)
+
+library(class)
+```
+
+
+### Objective: 
+The objective is to build a classifier for the type of breast cancer tissue (benign vs. malignant) using various features of the pathology of breast cancer tissue.
+
+### (a)
+
+perform 10-fold cross validations with all the methods you have tried. Which method would you use and why?
+
+#### Create functions for misclassification rates
+```{r}
+# Create function for misclassification rate from logistic regression
+logistic.error <- function(Train, Test) {
+  logistic.out <- glm(Class ~ ., data=Train, family="binomial")
+  pred.class <- predict(logistic.out, Test, type="response")
+  pred.class <- ifelse(pred.class >0.5, "1", "0")
+  mean(Test$Class != pred.class)
+}
+
+# Create function for misclassification rate from LDA
+LDA.error <- function(Train, Test) {
+  library(MASS)
+  lda.out <- lda(Class ~ ., data=Train)
+  pred.class = predict(lda.out, Test)$class
+  mean(Test$Class != pred.class)
+}
+
+# Create function for misclassification rate from QDA
+QDA.error <- function(Train, Test) {
+  qda.out <- qda(Class ~ ., data=Train)
+  pred.class = predict(qda.out, Test)$class
+  mean(Test$Class != pred.class)
+}
+
+# Create function for misclassification rate from KNN; use default k=1
+KNN.error <- function(Train, Test, k) {
+  Train.KNN <- scale(Train[, which(names(Train) !="Class")])
+  Test.KNN <- scale(Test[,which(names(Test) !="Class")])
+  Test.class <- Test$Class
+  Train.class <- Train$Class
+  
+  set.seed(123)
+  pred.class=knn(Train.KNN, Test.KNN, Train.class, k=k)
+  mean(Test.class != pred.class)
+}
+```
+
+#### Create function for cross-validation
+```{r}
+# Create function for cross-validation
+CV.error <- function(data, m, method){
+  ## Define M as the number of folds
+  M <- m
+  
+  ## create data frame to store CV errors
+  library(tidyverse)
+  cv_error_df <- matrix(0, nrow=1, ncol=M) %>%
+    as.data.frame(.)
+  
+  # make column names nice
+  colnames(cv_error_df) <- str_replace(colnames(cv_error_df), 'V', 'fold')
+  
+  # seed
+  set.seed(132421)
+  
+  # for each of the M folds
+  for(m in 1:M){
+    
+    #name the 'Train' argument CVdata for clarity (data we're running cross validation on)
+    CVdata <- data
+    
+    #Randomly shuffle the data
+    CVdata <- CVdata[sample(nrow(CVdata)),]
+    
+    #Create M equally size folds
+    folds <- cut(seq(1,nrow(CVdata)),breaks=M,labels=FALSE)
+    
+    #Segement your data by fold using the which() function 
+    testIndexes <- which(folds == m, arr.ind=TRUE)
+    cv_tr <- CVdata[-testIndexes, ]
+    cv_tst <- CVdata[testIndexes, ]
+  
+    # compute the test error on the validation set
+    errs <- method(cv_tr, cv_tst)
+      
+    # store values in the data frame
+    cv_error_df[1, paste0('fold',m)] <- errs
+    cv_error_df <- as.data.frame(cv_error_df)
+  }
+
+  # compute the mean cv error
+  cv_mean_error <- rowMeans(cv_error_df)
+  cv_mean_error
+  
+  return(cv_mean_error)
+}
+```
+
+#### Create function for cross-validation - KNN
+```{r}
+KNN.CV.error <- function(Train, Test, k, m){
+  # Define M as the number of folds
+  M <- m
+  
+  # Define how many k you want to try; let's try k=1 through 8
+  k_values = 1:k
+  num_k=length(k_values)
+  
+  # Create data frame to store CV errors
+  cv_error_df <- matrix(0, nrow=num_k, ncol=M) %>%
+    as.data.frame(.) %>%
+    mutate(k=k_values)
+  
+  # Make column names nice
+  colnames(cv_error_df) <- str_replace(colnames(cv_error_df), 'V', 'fold')
+  
+  # Set seed
+  set.seed(123)
+  
+  # For each of the M folds
+  for(m in 1:M){
+    
+    # Name the 'Train' argument CVdata for clarity (data we're running cross validation on)
+    CVdata <- Train
+    
+    # Randomly shuffle the data
+    CVdata <- CVdata[sample(nrow(CVdata)),]
+    
+    # Create M equally size folds
+    folds <- cut(seq(1,nrow(CVdata)), breaks = M, labels=FALSE)
+    
+    # Segement your data by fold using the which() function 
+    testIndexes <- which(folds == m, arr.ind=TRUE)
+    cv_tr <- CVdata[-testIndexes, ]
+    cv_tst <- CVdata[testIndexes, ]
+    
+    
+    # For each value of k we are interested in
+    for(i in 1:num_k){
+      # Fix k for this loop iteration
+      K <- k_values[i]
+      
+      # Compute the test error on the validation set
+      errs <- KNN.error(cv_tr, cv_tst, K)
+      
+      # Store values in the data frame
+      cv_error_df[i, paste0('fold',m)] <- errs
+    }
+  }
+  
+  cv_error_df <- as.data.frame(cv_error_df)
+  
+  
+  # Compute the mean cv error for each value of k
+  cv_mean_error <- cv_error_df[,which(names(cv_error_df) !="k")]
+  cv_mean_error <- rowMeans(cv_mean_error)
+  
+  # Select only one k
+  final_k <- which(cv_mean_error==min(cv_mean_error))[1]
+  
+  # Now get misclassification rate on test using CV k selected
+  KNN.error(Train, Test, final_k)
+}
+```
+
+
+#### Perform 10-fold cross validations
+```{r, warning=FALSE}
+# 10-fold cross validations for logistic regression
+logit_cv10 <- CV.error(data, m = 10, method = logistic.error)
+logit_cv10
+
+# 10-fold cross validations for LDA
+lda_cv10 <- CV.error(data, m = 10, method = LDA.error)
+lda_cv10
+
+# 10-fold cross validations for QDA
+qda_cv10 <- CV.error(data, m = 10, method = QDA.error)
+qda_cv10
+
+# prepare data for knn_cv
+test_index = sample(nrow(data), ceiling(0.5*nrow(data)))
+
+test_data = data[test_index,]
+train_data = data[-test_index,]
+
+# 10-fold cross validations for KNN
+knn_cv10 <- KNN.CV.error(Train = train_data, Test = test_data, k = 10, m = 10)
+knn_cv10
+```
+
+#### Which method would you use and why?
+
+**Answer: **
+I think I would use KNN since the misclassification error of KNN with cross validation is the lowest.
+
+### (b)
+
+provide a detailed description of pros and cons of each method for this example.
+
+**Answer: **
+
+**Logistic Regression:**
+
+Logistic Regression is advantageous for binary and multi-class classification tasks. It effectively handles such problems. However, one disadvantage of logistic regression is that it assumes a linear relationship between the features and the log-odds of the target variable. This assumption may limit its performance when dealing with complex non-linear relationships. Additionally, logistic regression is sensitive to outliers.
+
+**LDA (Linear Discriminant Analysis):**
+
+LDA, or Linear Discriminant Analysis, offers several advantages. It is capable of handling multi-class classification problems and assumes a linear decision boundary. It achieves this by reducing the dimensionality of the data. LDA performs well when the classes are well-separated and when the normalcy assumptions hold true. On the other hand, one of its disadvantages is that it assumes the classes share the same covariance matrix, which may not always be the case. LDA may not work well when classes overlap or when the assumptions are violated. Moreover, it is not suitable for high-dimensional datasets.
+
+**QDA (Quadratic Discriminant Analysis):**
+
+QDA, or Quadratic Discriminant Analysis, has its advantages. It overcomes the assumption of equal covariance matrices across classes, making it suitable for cases where the classes have different covariance structures. Compared to LDA, QDA is capable of capturing more complex decision boundaries. It is particularly appropriate for classes that cannot be separated linearly. However, QDA has its disadvantages as well. It requires estimating a unique covariance matrix for each class, which can be computationally expensive. It is also prone to overfitting when the number of features is high and the training data is sparse. Furthermore, QDA is sensitive to outliers and may not perform well when the quality of the covariance matrices is poor.
+
+**KNN (K-Nearest Neighbors):**
+
+KNN, or K-Nearest Neighbors, has several advantages. It is a non-parametric algorithm that can handle any type of decision boundary, making it a versatile choice for classification tasks. It performs well for both binary and multi-class problems. However, there are some disadvantages associated with KNN. It requires storing the entire training dataset, which can be memory-intensive, especially for large datasets. Moreover, prediction with KNN can be computationally expensive, particularly when dealing with high-dimensional data.
+
+### (c)
+
+which theoretical error rate is being measured with the 10-fold CV and the train-test split you used in assignment 1? Which error estimate is preferred?
+
+**Answer: **
+The KNN error rate is being measured with the 10-fold CV and the train-test split used in assignment 1. 10-fold cross validations is preferred because re-sampling the training and testing datasets and calculate the error by taking the mean of them. This method allows the data in the dataset to be used equally and contribute to the result equally.
+
+## Question 2
+
+Simulate data to perform cross-validation using both the "right" and "wrong" way as described in Module 3 (Resampling Methods).
+
+### (a)
+
+Generate 1000 standard normal predictors, which are uncorrelated from the response that is uniform in {0,1} with a sample size of 200 (n=200). (Note: the response is binary and {0,1} does not mean the unit interval but the two discrete class labels 0 and 1. They are sampled uniformly which means they have a probability of 0.5 of being sampled uncorrelated to the predictors). 
+
+```{r}
+set.seed(123) # set seed for reproducibility
+
+# generate predictors
+n_predictors <- 1000
+predictors <- matrix(rnorm(n = n_predictors * 200), nrow = 200, ncol = n_predictors)
+colnames(predictors) <- seq(from=1, to=1000, by=1)
+
+# generate response
+response <- sample(c(0, 1), size = 200, replace = TRUE)
+
+# combine predictor and response together
+df <- as.data.frame(cbind(predictors, Class = response))
+```
+
+### (b)
+
+Write an R function that picks the “best” 20 predictors i.e. 20 predictors that have the highest correlation with the response
+
+```{r}
+pick_best_predictors <- function(data, num_predictors = 20){
+  predictors <- data[, -ncol(data)]
+  response <- data[, ncol(data)]
+  
+  # calculate correlation between predictors and response
+  corr <- cor(predictors, response)
+  sorted_corr <- sort(abs(corr), decreasing = TRUE)
+  top_predictors <- head(order(sorted_corr), decreasing = TRUE, num_predictors)
+  
+  # get the names of the top predictors
+  top_predictor_names <- colnames(predictors)[top_predictors]
+  
+  return(top_predictor_names)
+}
+```
+
+### (c)
+
+Write an R function which estimates the prediction error using 10-fold cross validation using the "wrong way" i.e. use the function of (b) to pick the best 20 predictors first, then perform 10-fold cross-validation using these set of 20 predictors. The function should output the CV estimated prediction error. Using this function report the CV-estimated prediction error on the data generated in (a). [Note: You can use any method of your choice to do prediction, e.g. logistic regression, LDA etc.]
+
+```{r}
+CV.error.wrong <- function(data, n_top, m){
+  
+  set.seed(123)
+
+  top_predictors <- pick_best_predictors(data, num_predictors = n_top)
+
+  library(tidyverse)
+  pred_data <- data %>% 
+    dplyr::select(all_of(top_predictors), Class)
+
+  cv_error <- CV.error(pred_data, m, logistic.error)
+  
+  return(cv_error)
+}
+library(tidyverse)
+```
+
+#### perform the function
+```{r}
+CV.error.wrong(data = df, n_top = 20, m = 10)
+```
+
+### (d)
+
+Write an R function which estimates the prediction error using 10-fold cross validation using the "right way" i.e. perform 10-fold cross-validation using all predictors and within each fold use the function of (b) to pick the best 20 predictors first using the training sample and then estimate the prediction error in the test sample. The function should output the CV estimated prediction error. Using this function report the CV-estimated prediction error on the data generated in (a). [Note: You can use any method of your choice to do prediction, e.g. logistic regression, LDA etc.]
+
+```{r, warning=FALSE}
+CV.error.right <- function(data, n_top, m, method){
+  # define M as the number of folds
+  M <- m
+  
+  # define sample size of training data
+  n <- nrow(data)
+  
+  # create data frame to store CV errors
+  library(tidyverse)
+  cv_error_df <- matrix(0, nrow=1, ncol=M) %>%
+    as.data.frame(.) 
+  
+  # make column names nice
+  colnames(cv_error_df) <- str_replace(colnames(cv_error_df), 'V', 'fold')
+  
+  # seed
+  set.seed(132421)
+  
+  # for each of the M folds
+  for(m in 1:M){
+    
+  # define data we're running cross validation on
+  CVdata <- data
+    
+  # Randomly shuffle the data
+  CVdata <- CVdata[sample(nrow(CVdata)),]
+    
+  # Create m equally size folds
+  folds <- cut(seq(1,nrow(CVdata)), breaks=M, labels=FALSE)
+    
+  # Segement the data by fold using the which() function 
+  testIndexes <- which(folds == m, arr.ind=TRUE)
+  cv_tr <- CVdata[-testIndexes, ]
+  cv_tst <- CVdata[testIndexes, ]
+  
+  top_predictors <- pick_best_predictors(cv_tr, num_predictors = n_top)
+  
+  # get predicted class of top predictors
+  pred_tr <- cv_tr %>%
+    dplyr::select(all_of(top_predictors), Class)
+  
+  pred_tst <- cv_tr %>%
+    dplyr::select(all_of(top_predictors), Class)
+  
+  # compute the test error on the validation set
+  errs <- method(cv_tr, cv_tst)
+      
+  # store values in the data frame
+  cv_error_df[1, paste0('fold',m)] <- errs
+  cv_error_df <- as.data.frame(cv_error_df)
+  }
+
+  # compute the mean cv error
+  cv_mean_error <- rowMeans(cv_error_df)
+  cv_mean_error
+  
+  return(cv_mean_error)
+}
+
+```
+#### perform the function
+```{r, warning=FALSE}
+CV.error.right(data = df, n_top = 20, m = 10, method = logistic.error)
+```
+
+### (e)
+
+Repeat the “right way” and the “wrong way” of estimating prediction error using 100 different data sets. Use the functions created in (b), (c) and (d). Plot the 100 estimates of prediction error using box-plots for the “right” way and the “wrong” way.
+
+```{r}
+right_way_error <- NULL
+wrong_way_error <- NULL
+
+# for (i in 1:100) {
+  # Set seed value to 123
+  # set.seed(123)
+
+  # Generate response
+  # response <- sample(c(rep(0, 100), rep(1, 100)))
+  
+  # Generate predictors
+  # predictors <- matrix(rnorm(200 * 1000), nrow = 200)  
+  # colnames(predictors) <- seq(from = 1, to = 1000, by = 1)
+  
+  # Combine the predictors and response together
+  # data <- as.data.frame(cbind(predictors, Class = response))
+  
+  # Calculate the error rates
+  # wrong_way_error[i] <- CV.error.wrong(data, 20, 10)
+  
+  # right_way_error[i] <- CV.error.right(data, 20, 10, logistic.error)
+
+# }
+
+# Error_rates <- data.frame(Error_rate = c(wrong_way_error, right_way_error), Method = c(rep("Wrong", 100), rep("Right", 100)))
+
+# Plot the 100 estimates of prediction error using box-plots for the "right" way and the "wrong" way 
+
+# boxplot(Error_rate ~ Method, data=Error_rates, col=c("steelblue1", "pink1"), ylab="Error Rate", main="Performance of different CV methods", cex.axis=0.6)
+```
+It costed too much time generating this output.

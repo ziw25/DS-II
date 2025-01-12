@@ -1,0 +1,247 @@
+---
+title: "Assignment 5 - SVM"
+author: "Ziwen Zhang"
+date: "2023-07-21"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    fig_height: 6.5
+    fig_width: 9.5
+---
+
+## Dataset
+Use the "Heart" dataset saved in the module that contains a binary outcome AHD for 303 patients who presented with chest pain. An outcome value of Yes indicates the presence of heart disease based on an angiographic test, while No means no heart disease. There are 13 predictors including Age, Sex, Chol (a cholesterol measurement), and other heart and lung function measurements.
+
+```{r, warning=FALSE}
+# load libraries
+library(tidyverse)
+library(caret)
+library(e1071)
+library(MASS)
+library(pROC)
+
+# load the data set
+heart <- read.csv("heart.csv")[,-1]
+
+# change the data types
+heart$Thal <- as.factor(heart$Thal) %>% as.numeric()
+heart$AHD <- ifelse(heart$AHD == "No", 0, 1)
+heart$ChestPain <- as.factor(heart$ChestPain) %>% as.numeric()
+
+# view datatype
+str(heart)
+```
+
+
+## Goal:
+Recreate the four graphs from the SVM lecture notes (7.SVM_Annotated.pdf) page 29 and 30.
+
+## Question 1 - Data Wrangling
+Filter out missing values from the “heart” dataset and split the data in 207 patients in the training data and 90 patients in the test data. You can use seed=23453 to reproduce the results from the solution that will be posted for this Assignment.
+```{r}
+# filter out missing values
+heart_clean <- na.omit(heart)
+
+# split the data in 207 patients in training data and 90 in testing data
+set.seed(24543)
+train_idx <- createDataPartition(heart_clean$AHD, p = 0.694, list = FALSE)
+training_data <- heart_clean[train_idx, ]
+test_data <- heart_clean[-train_idx, ]
+
+# check the dimensions of the data sets
+nrow(training_data) # Should be 207
+nrow(test_data)     # Should be 90
+```
+
+## Question 2
+Perform a linear SVM or a support vector classifier with cost = 0.01 and gamma of 2 on the training set. Also perform a linear discriminant analysis (LDA) on the same training data. Plot the ROC curve for the Support Vector Classifier and LDA in the same plot. Comment on the performance of the two methods on training data.
+```{r}
+# separate the predictors and outcome variable
+x_train <- training_data[, 1:13] # eliminate the target
+y_train <- training_data$AHD # set as the target
+
+# perform svm with cost=0.01 and gamma=2
+svm_model <- svm(AHD ~ ., data = training_data, kernel = "linear", cost = 0.01, gamma = 2)
+
+# perform LDA on the same training data
+lda_model <- lda(AHD ~ ., data = training_data)
+
+# predict target values
+svm_train_pred <- predict(svm_model, newdata = x_train, type = "Response")
+lda_train_pred <- predict(lda_model, newdata = x_train, type = "Response")$posterior[,2]
+
+# calculate ROC
+svm_roc <- roc(y_train, svm_train_pred)
+lda_roc <- roc(y_train, lda_train_pred)
+
+# calculate AUC
+svm_auc <- auc(svm_roc) %>% round(4)
+lda_auc <- auc(lda_roc) %>% round(4)
+paste("The AUC for SVM is: ", svm_auc)
+paste("The AUC for LDA is: ", lda_auc)
+
+# calculate True/False Positive rate
+true_positive_svm <- svm_roc$sensitivities
+true_positive_lda <- lda_roc$sensitivities
+false_positive_svm <- 1-svm_roc$specificities
+false_positive_lda <- 1-lda_roc$specificities
+
+# plot ROC curves
+plot(false_positive_svm, true_positive_svm, col = "blue", main = "ROC Curve - SVM vs LDA", xlab = "False Positive Rate", ylab = "True Positive Rate", type = "s", lwd = 2)
+lines(false_positive_lda, true_positive_lda, col = "red", type = "s", lwd = 2)
+legend("bottomright", legend = c("SVM", "LDA"), col = c("blue", "red"), lwd = 2)
+```
+
+**Comments: **
+
+From the plot, we can see that the area under curve (AUC) for LDA is slightly larger than that for SVM, indicating that LDA performs better on the training dataset.
+
+## Question 3
+Perform a non-linear SVM with “radial” kernel on training data with three gamma values of 10^-1, 10^-2, 10^-3 and compare with the linear classifier of (1). You can use cross-validation to choose the cost parameter for each of these four methods. Plot the ROC curve for these four methods on the training data. Comment on the results.
+
+### cross-validation for best cost parameter
+```{r}
+# linear SVM with cross-validation
+svm_linear <- tune(svm, AHD ~ ., data = training_data, kernel = "linear", ranges = list(cost=c(0.001 , 0.01, 0.1, 1,5,10,100)) )
+
+# non-linear SVM with cross-validation
+svm_radial_1 <- tune(svm, AHD ~ ., data = training_data, kernel = "radial",ranges = list(cost=c(0.001 , 0.01, 0.1, 1,5,10,100), gamma = 10^(-1)) )
+
+svm_radial_2 <- tune(svm, AHD ~ ., data = training_data, kernel = "radial",ranges = list(cost=c(0.001 , 0.01, 0.1, 1,5,10,100), gamma = 10^(-2)) )
+
+svm_radial_3 <- tune(svm, AHD ~ ., data = training_data, kernel = "radial",ranges = list(cost=c(0.001 , 0.01, 0.1, 1,5,10,100), gamma = 10^(-3)) )
+
+# extract the best cost parameter 
+best_cost_linear <- svm_linear$best.parameters$cost
+best_cost_radial_1 <- svm_radial_1$best.parameters$cost
+best_cost_radial_2 <- svm_radial_2$best.parameters$cost
+best_cost_radial_3 <- svm_radial_3$best.parameters$cost
+```
+
+### model training with best cost parameter
+```{r}
+svm_linear_best <- svm(AHD ~ ., data = training_data, kernel = "linear", cost = best_cost_linear)
+svm_radial_1_best <- svm(AHD ~ ., data = training_data, kernel = "radial", cost = best_cost_radial_1, gamma = 10^(-1))
+svm_radial_2_best <- svm(AHD ~ ., data = training_data, kernel = "radial", cost = best_cost_radial_2, gamma = 10^(-2))
+svm_radial_3_best <- svm(AHD ~ ., data = training_data, kernel = "radial", cost = best_cost_radial_3, gamma = 10^(-3))
+```
+
+### Plot ROC for four methods
+```{r}
+# predict target values
+svm_linear_train_pred <- predict(svm_linear_best, x_train, probability = TRUE)
+svm_radial_1_train_pred <- predict(svm_radial_1_best, x_train, probability = TRUE)
+svm_radial_2_train_pred <- predict(svm_radial_2_best, x_train, probability = TRUE)
+svm_radial_3_train_pred <- predict(svm_radial_3_best, x_train, probability = TRUE)
+
+# calculate ROC
+svm_linear_roc <- roc(y_train, svm_linear_train_pred)
+svm_radial_1_roc <- roc(y_train, svm_radial_1_train_pred)
+svm_radial_2_roc <- roc(y_train, svm_radial_2_train_pred)
+svm_radial_3_roc <- roc(y_train, svm_radial_3_train_pred)
+
+# calculate AUC
+svm_linear_auc <- auc(svm_linear_roc) %>% round(4)
+svm_radial_1_auc <- auc(svm_radial_1_roc) %>% round(4)
+svm_radial_2_auc <- auc(svm_radial_2_roc) %>% round(4)
+svm_radial_3_auc <- auc(svm_radial_3_roc) %>% round(4)
+paste("The AUC for linear SVM is: ", svm_linear_auc)
+paste("The AUC for radial SVM 1 is: ", svm_radial_1_auc)
+paste("The AUC for radial SVM 2 is: ", svm_radial_2_auc)
+paste("The AUC for radial SVM 3 is: ", svm_radial_3_auc)
+
+# calculate True/False Positive rate
+true_positive_svm_linear <- svm_linear_roc$sensitivities
+true_positive_svm_radial_1 <- svm_radial_1_roc$sensitivities
+true_positive_svm_radial_2 <- svm_radial_2_roc$sensitivities
+true_positive_svm_radial_3 <- svm_radial_3_roc$sensitivities
+
+false_positive_svm_linear <- 1-svm_linear_roc$specificities
+false_positive_svm_radial_1 <- 1-svm_radial_1_roc$specificities
+false_positive_svm_radial_2 <- 1-svm_radial_2_roc$specificities
+false_positive_svm_radial_3 <- 1-svm_radial_3_roc$specificities
+
+# plot ROC curves
+plot(false_positive_svm_linear, true_positive_svm_linear, col = "blue", main = "ROC Curve - Linear SVM vs Radial SVM", xlab = "False Positive Rate", ylab = "True Positive Rate", type = "s", lwd = 2)
+lines(false_positive_svm_radial_1, true_positive_svm_radial_1, col = "red", type = "s", lwd = 2)
+lines(false_positive_svm_radial_2, true_positive_svm_radial_2, col = "green", type = "s", lwd = 2)
+lines(false_positive_svm_radial_3, true_positive_svm_radial_3, col = "pink", type = "s", lwd = 2)
+legend("bottomright", legend = c("Linear SVM", "Radial SVM with gamma = 10^(-1)", "Radial SVM with gamma = 10^(-2)", "Radial SVM with gamma = 10^(-3)"), col = c("blue", "red", "green", "pink"), lwd = 2)
+```
+
+**Comments: **
+
+From the plot, we can see that the area under curve (AUC) for radial SVM with gamma = 10^(-1) is the largest, indicating that this model performs the best on the training dataset.
+
+
+## Question 4
+Compare the ROC curve of the five methods (3 non-linear SVM, 1 linear SVM and LDA) on the test data using the chosen values of the cost parameter. Comment on the results.
+
+### generate predicted outcome on the testing dataset
+```{r}
+# separate the predictors and outcome variable
+x_test <- test_data[, 1:13] # eliminate the target
+y_test <- test_data$AHD # set as the target
+
+# predict target values on testing data
+svm_linear_test_pred <- predict(svm_linear_best, x_test, probability = TRUE)
+svm_radial_1_test_pred <- predict(svm_radial_1_best, x_test, probability = TRUE)
+svm_radial_2_test_pred <- predict(svm_radial_2_best, x_test, probability = TRUE)
+svm_radial_3_test_pred <- predict(svm_radial_3_best, x_test, probability = TRUE)
+lda_test_pred <- predict(lda_model, newdata = x_test, type = "Response")$posterior[,2]
+```
+
+### calculate ROC & AUC
+```{r}
+# calculate ROC
+svm_linear_roc <- roc(y_test, svm_linear_test_pred)
+svm_radial_1_roc <- roc(y_test, svm_radial_1_test_pred)
+svm_radial_2_roc <- roc(y_test, svm_radial_2_test_pred)
+svm_radial_3_roc <- roc(y_test, svm_radial_3_test_pred)
+lda_roc <- roc(y_test, lda_test_pred)
+
+# calculate AUC
+svm_linear_auc <- auc(svm_linear_roc) %>% round(4)
+svm_radial_1_auc <- auc(svm_radial_1_roc) %>% round(4)
+svm_radial_2_auc <- auc(svm_radial_2_roc) %>% round(4)
+svm_radial_3_auc <- auc(svm_radial_3_roc) %>% round(4)
+lda_auc <- auc(lda_roc) %>% round(4)
+paste("The AUC for linear SVM on test data is: ", svm_linear_auc)
+paste("The AUC for radial SVM 1 on test data is: ", svm_radial_1_auc)
+paste("The AUC for radial SVM 2 on test data is: ", svm_radial_2_auc)
+paste("The AUC for radial SVM 3 on test data is: ", svm_radial_3_auc)
+paste("The AUC for LDA on test data is: ", lda_auc)
+```
+
+### calculate True/False Positive rate
+```{r}
+# calculate true positive rate
+true_positive_svm_linear <- svm_linear_roc$sensitivities
+true_positive_svm_radial_1 <- svm_radial_1_roc$sensitivities
+true_positive_svm_radial_2 <- svm_radial_2_roc$sensitivities
+true_positive_svm_radial_3 <- svm_radial_3_roc$sensitivities
+true_positive_lda <- lda_roc$sensitivities
+
+# calculate false positive rate
+false_positive_svm_linear <- 1-svm_linear_roc$specificities
+false_positive_svm_radial_1 <- 1-svm_radial_1_roc$specificities
+false_positive_svm_radial_2 <- 1-svm_radial_2_roc$specificities
+false_positive_svm_radial_3 <- 1-svm_radial_3_roc$specificities
+false_positive_lda <- 1-lda_roc$specificities
+```
+
+### plot ROC curves
+```{r}
+plot(false_positive_svm_linear, true_positive_svm_linear, col = "blue", main = "ROC Curve - Linear SVM vs Radial SVM vs LDA", xlab = "False Positive Rate", ylab = "True Positive Rate", type = "s", lwd = 2)
+lines(false_positive_svm_radial_1, true_positive_svm_radial_1, col = "red", type = "s", lwd = 2)
+lines(false_positive_svm_radial_2, true_positive_svm_radial_2, col = "green", type = "s", lwd = 2)
+lines(false_positive_svm_radial_3, true_positive_svm_radial_3, col = "pink", type = "s", lwd = 2)
+lines(false_positive_lda, true_positive_lda, col = "yellow", type = "s", lwd = 2)
+legend("bottomright", legend = c("Linear SVM", "Radial SVM with gamma = 10^(-1)", "Radial SVM with gamma = 10^(-2)", "Radial SVM with gamma = 10^(-3)", "LDA"), col = c("blue", "red", "green", "pink", "yellow"), lwd = 2)
+```
+
+**Comments: **
+
+From the plot, we can see that the area under curve (AUC) for the five models seem similar, indicating that all of these models perform well on the testing dataset.

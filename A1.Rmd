@@ -1,0 +1,200 @@
+---
+title: "Assignment 1"
+author: "Ziwen Zhang"
+date: "2023-05-29"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    fig_height: 6.5
+    fig_width: 9.5
+---
+
+## Data description: 
+
+Clinical cases of breast cancer tissue samples arrived periodically at Pathology lab at the University of Wisconsin-Madison. The data is labelled 'breast-cancer-wisconsin.data' and can be found in the Classification module.
+
+```{r, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+# Specify the file path of the .DATA file
+file_path <- "D:\\Cornell\\Data_Science_II\\Assignment\\A1\\breast-cancer-wisconsin.data"
+
+# Read the .DATA file
+data <- read.csv(file_path, header = F)
+
+# load library
+library(dplyr)
+
+# Name columns
+colnames(data) <- c("Sample_code", "Clump_thickness", "Cell_size", "Cell_shape", "Marginal_adhesion", "SE_cell_size", "Bare_nuclei", "Bland_chromatin","Normal_nucleoli", "Mitoses", "Class")
+
+# check data type
+str(data)
+
+# change chracter to numeric
+data$Bare_nuclei <- as.numeric(data$Bare_nuclei)
+
+# replace missing value with mean
+data$Bare_nuclei <- ifelse(data$Bare_nuclei == "?", NA, data$Bare_nuclei)
+
+mean <- round(mean(data$Bare_nuclei, na.rm = T))
+
+data$Bare_nuclei <- ifelse(is.na(data$Bare_nuclei), mean, data$Bare_nuclei)
+
+# denote the class with zero and one
+data$Class <- ifelse(data$Class == 2, 0, 1)
+
+# drop the id column
+data <- data %>%
+  select(-`Sample_code`)
+```
+
+## (a)
+
+Split the data randomly into training (50%) and test set (50%). Use a seed value of 132421.
+
+```{r}
+# Set the seed value for reproducibility
+set.seed(132421)
+
+# Separate out the outcome variable
+Class <- data %>%
+  select(Class)
+
+# Split the data into 50% training and 50% test sets
+test_index <- sample(nrow(data), ceiling(0.5*nrow(data)))
+
+test_data <- data[test_index,]
+train_data <- data[-test_index,]
+
+test_class <- Class[test_index,]
+train_class <- Class[-test_index,]
+```
+
+## (b)
+
+Use logistic regression with all predictors to estimate prediction error.
+
+```{r, warning=FALSE}
+# Fit a logistic regression model with all predictors using the training data
+logit <- glm(Class ~ ., data = train_data, family = "binomial")
+
+# Make predictions on the test data using the fitted model
+predicted_classes <- predict(logit, newdata = test_data, type = "response")
+
+# Convert predicted probabilities to predicted classes (benign - 0 or malignant - 1)
+predicted_classes <- ifelse(predicted_classes > 0.5, 1, 0)
+
+# Calculate the prediction error
+prediction_error <- mean(predicted_classes != test_data$Class)
+
+# Print the prediction error
+prediction_error
+```
+From the output, the prediction error of logistic regression is around 0.0429.
+
+
+## (c)
+
+Repeat (b) with Linear Discriminant Analysis.
+
+```{r, warning=FALSE, message=FALSE}
+# load the 'MASS' package for LDA
+library(MASS)
+
+# Fit the LDA model with all predictors using the training data
+lda <- lda(Class ~ ., data = train_data)
+
+# Make predictions on the test data using the fitted LDA model
+predicted_classes <- predict(lda, newdata = test_data)$class
+
+# Calculate the prediction error
+prediction_error <- mean(predicted_classes != test_data$Class)
+
+# Print the prediction error
+prediction_error
+```
+
+From the output, the prediction error of Linear Discriminant Analysis is around 0.0343.
+
+
+## (d)
+
+Repeat (b) with Quadratic Discriminant Analysis.
+
+```{r, warning=FALSE}
+# Fit the QDA model with all predictors using the training data
+qda <- qda(Class ~ ., data = train_data)
+
+# Make predictions on the test data using the fitted QDA model
+predicted_classes <- predict(qda, newdata = test_data)$class
+
+# Calculate the prediction error
+prediction_error <- mean(predicted_classes != test_data$Class)
+
+# Print the prediction error
+prediction_error
+```
+
+From the output, the prediction error of Quadratic Discriminant Analysis is around 0.0686.
+
+## (e)
+
+Repeat (b) with k-Nearest Neighbor algorithm with K=1 to 10 and report 10 estimates of prediction error in a table.
+
+```{r, warning=FALSE}
+# load the 'class' package for kNN
+library(class)
+
+# Scale the data
+standardized_data <- scale(data[,-10])
+
+# create train and test data set
+test_data_knn <- standardized_data[test_index,]
+train_data_knn <- standardized_data[-test_index,]
+
+# Create a table to store the prediction errors for each value of k
+k_values <- 1:10
+prediction_errors <- matrix(NA, nrow = 10, ncol = 1)
+
+# Iterate through different values of k
+for (k in k_values) {
+  
+  set.seed(132421)
+  
+  # Fit the k-NN model with the specified value of k using the training data
+  knn <- knn(train_data_knn, test_data_knn, train_data$Class, k = k)
+  
+  # Calculate the prediction error
+  prediction_errors[k] <- mean(knn != test_data$Class)
+}
+
+# Create a table to display the prediction errors
+prediction_errors_table <- data.frame(k = k_values, prediction_error = prediction_errors)
+
+# Print the prediction error
+prediction_errors_table
+
+```
+
+From the output, the prediction error of KNN for k value from 1 to 10 is from around 0.0457 (k=2) to around 0.0257 (k=4).
+
+
+## (f)
+
+The below article has generated a lot of buzz recently. Explain how, with 90% accuracy and a population infection rate of 5%, a diagnostic test can also have 70% false positives amongst those diagnosed.
+
+**Answer: **
+
+To understand how a test can have 90% accuracy while still having a significant number of false positives, we need to consider two factors: test sensitivity and test specificity.
+
+Test Sensitivity refers to the ability of a test to correctly identify individuals who have the condition (true positive rate). In this case, the condition would be the presence of antibodies indicating an infection.
+
+Test Specificity refers to the ability of a test to correctly identify individuals who do not have the condition (true negative rate). In this case, it would be individuals who do not have the antibodies.
+
+Consider a hypothetical scenario with 1000 people in this study:
+
+5% (50 individuals) have the antibodies, and the test correctly identifies 90% of those with antibodies, which means it correctly identifies 45 ot of the 50 infected individuals (true positives), and the remaining 5 are not correctly identified (false negatives). Among the 950 people without antibodies, the test incorrectly identifies 70% (665 people) as positive, which accounts for false positives, and the remaining 285 people accounts for true negatives.

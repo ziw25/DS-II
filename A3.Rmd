@@ -1,0 +1,268 @@
+---
+title: "Assignment 3 - Model Selection & Non-linearity"
+author: "Ziwen Zhang"
+date: "2023-06-28"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    fig_height: 6.5
+    fig_width: 9.5
+---
+
+# Model Selection
+The goal of this assignment is to use real and messy data to build a predictive model for heart disease. The data correspond to a study that was conducted in four centers and therefore there are four sources of the data - from Cleveland, Switzerland, Long Beach V. A. and Hungary.
+
+The main outcome is presence of heart disease in the patient. It is integer valued from 0 (no presence) to 4. Convert this into a binary outcome - absence (0) vs presence (1,2,3,4) of heart disease. 
+
+Predictors: There are 76 attributes/predictors of this database, 14 of them have been used before and there are available in a clean format. File having "processed" in their name are clean files with 14 predictors.
+
+## Question 1 (a) Data Wrangling
+```{r, warning=FALSE}
+library(readr)
+library(tidyverse)
+
+# load four processed data sets
+cleveland <- read.csv("processed.cleveland.data", header = FALSE)
+hungarian <- read.csv("processed.hungarian.data", header = FALSE)
+switzerland <- read.csv("processed.switzerland.data", header = FALSE)
+longbeachva <- read.csv("processed.va.data", header = FALSE)
+
+# change data type
+cleveland <- cleveland %>%
+  mutate_all(as.numeric)
+## str(cleveland)
+
+hungarian <- hungarian %>%
+  mutate_all(as.numeric)
+## str(hungarian)
+
+switzerland <- switzerland %>%
+  mutate_all(as.numeric)
+## str(switzerland)
+
+longbeachva <- longbeachva %>%
+  mutate_all(as.numeric)
+## str(longbeachva)
+
+# combine into final data
+data <- bind_rows(cleveland, hungarian, switzerland, longbeachva)
+
+# rename the column names
+column_names <- c("age", "sex", "chest_pain", "rest_blood_pressure", "cholesterol", "fasting_blood_sugar", "rest_ecg", "max_heart_rate", "exercise_angina", "oldpeak", "slope", "vessels", "thal", "target")
+colnames(data) <- column_names
+
+# check missing value in the final data set
+colSums(is.na(data))
+
+# remove missing values
+data <- data %>%
+  select(-"slope", -"vessels", -"thal") %>%
+  na.omit()
+
+# convert the outcome into binary outcome - absence (0) and presence (1)
+data$target <- ifelse(data$target == 0, 0, 1)
+  
+n <- nrow(data)
+p <- ncol(data) - 1
+paste("The final sample size (n) is ", n)
+paste("The number of predictors (p) is ", p)
+```
+There are 740 observations and 10 variables in the final data set. I firstly check the missing value for each variable in the final data set and find that the missing values are concentrated at the variable 11 ("slope"), variable 12 ("vessels"), and variable 13 ("thal"). In order to keep as many observations as possible and make sure that data are balanced among the four sources, I removed these three column before removing rows contain missing value.
+
+## Question 1 (b) Bonus
+```{r, warning=FALSE}
+raw_cleveland <- read.csv("cleveland.data", header = FALSE)
+raw_hungarian <- read.csv("hungarian.data", header = FALSE)
+raw_switzerland<- read.csv("switzerland.data", header = FALSE)
+raw_longbeachva <- read.csv("long-beach-va.data", header = FALSE)
+```
+
+
+## Question 2 
+The goal is to find the best regression-based model for "predicting" heart disease. The best model should be based on each of the following three methods -
+a) Best subset selection (hint: learn to use package R/bestglm).
+b) Stepwise regression (choose one - forward, backward or both direction)
+c) Elastic Net regression (choose an appropriate value of  and explain the reasons for that choice).
+
+### (a) Best subset selection
+(hint: learn to use package R/bestglm)
+```{r, warning=FALSE}
+library(bestglm)
+set.seed(234)
+# divide data into testing and training 50%
+test_index = sample(nrow(data), ceiling(0.5*nrow(data)))
+test_data <- data[test_index, -ncol(data)]
+train_data <- data[-test_index, ]
+
+test_label <- as.numeric(data[test_index, ncol(data)])
+test_full <- data[test_index, ]
+
+# fit best subset selection model
+regfit.bss <- bestglm(train_data, family = binomial, IC = "AIC")
+
+summary(regfit.bss$BestModel)
+
+# make predictions on testing data and calculate mean standard error
+pred_label_bss <- ifelse(predict(regfit.bss$BestModel, newdata = test_data, type = "response") > 0.5, 1, 0)
+
+library(ModelMetrics)
+mse_bss <- mse(test_label, pred_label_bss)
+mse_bss
+```
+
+The MSE of the best model selected is 0.2054
+
+### (b) stepwise selection
+(choose one - forward, backward or both direction)
+```{r}
+# fit a stepwise regression model
+model <- glm(target ~ ., data = train_data, family = "binomial")
+regfit.fwd <- step(model, direction = "forward", trace = F)
+summary(regfit.fwd)
+
+# make predictions on testing data and calculate mean standard error
+pred_label_fwd <- ifelse(predict(regfit.fwd, newdata = test_data, type = "response") > 0.5, 1, 0)
+
+mse_fwd <- mse(test_label, pred_label_fwd)
+mse_fwd
+```
+
+The MSE of the forward stepwise model is 0.2054
+
+### (c) elastic net regression
+(choose an appropriate value of alpha and explain the reasons for that choice)
+```{r, warning=FALSE}
+set.seed(345)
+library(glmnet)
+
+# separate the predictors and label
+x <- model.matrix(target ~., train_data)[,-1] # remove the first column corresponding to the intercept
+y <- train_data$target
+
+# Lasso Regression
+lambda_lasso <- cv.glmnet(x, y, family = "binomial", nfolds = 10, alpha = 1)
+regfit.lasso <- glmnet(x, y, family = "binomial", alpha = 1, lambda = lambda_lasso$lambda.min)
+coef(regfit.lasso)
+
+# Ridge Regression
+lambda_ridge <- cv.glmnet(x, y, family = "binomial", nfolds = 10, alpha = 0)
+regfit.ridge <- glmnet(x, y, family = "binomial", alpha = 0, lambda = lambda_ridge$lambda.min)
+coef(regfit.ridge)
+
+# Elastic Net Regression
+lambda_elastic_net <-  cv.glmnet(x, y, family = "binomial", nfolds = 10, alpha = 0.5)
+regfit.net <- glmnet(x, y, family = "binomial", alpha = 0.5, lambda = lambda_elastic_net$lambda.min)
+coef(regfit.net)
+```
+
+**Interpretation: **
+In Elastic Net regression, the alpha parameter controls the balance between the L1 (Lasso) and L2 (Ridge) regularization penalties. It takes values between 0 and 1, where 0 corresponds to Ridge regression and 1 corresponds to Lasso regression. To determine an appropriate alpha value, we can use cross-validation to evaluate different alpha values and select the one that minimized the prediction error. 
+
+```{r}
+# separate the test predictors and labels
+x_test <- model.matrix(target ~., test_full)[,-1]
+
+# make predictions on testing data and calculate the mean squared error
+pred_label_lasso <- ifelse(predict(regfit.lasso, newx = as.matrix(x_test), type = "response") > 0.5, 1, 0)
+
+mse_lasso <- mse(test_label, pred_label_lasso)
+mse_lasso
+
+pred_label_ridge <- ifelse(predict(regfit.ridge, newx = as.matrix(x_test), type = "response") > 0.5, 1, 0)
+
+mse_ridge <- mse(test_label, pred_label_ridge)
+mse_ridge
+
+pred_label_net<- ifelse(predict(regfit.net, newx = as.matrix(x_test), type = "response") > 0.5, 1, 0)
+
+mse_net <- mse(test_label, pred_label_net)
+mse_net
+```
+
+The MSE of the lasso regression model is 0.2054
+The MSE of the ridge regression model is 0.2027
+The MSE of the elastic net model is 0.2054
+Ridge regression has the lowest MSE.
+
+**Explaining choice of prediction error, and the method of estimating this error **
+
+For comparing the models and estimating prediction error, we use mean squared error (MSE). MSE is a common loss function for regression problems that measures the average squared difference between the predicted and actual values. To estimate the prediction error, we use k-fold cross-validation. By averaging the MSE values across the different folds, we can obtain a reliable estimate of the model's performance.
+
+**which statistical method is my choice and why**
+
+Statistical method and model choice depends on the specific results obtained from each method. We select the model that yields the lowest prediction error (MSE) among the three methods (Best Subset Selection, Stepwise Regression, Elastic Net Regression) to identify the best regression-based model for predicting heart disease. In this case, Ridge regression model yields the lowest prediction error (MSE = 0.2027) and thus Ridge regression is the best choice. Since the smaller the mean square error is, the better model performance has.
+
+
+# Non-linearity
+Dataset: Use the "Heart" dataset saved in the module that contains a binary outcome AHD for 303 patients who presented with chest pain. An outcome value of Yes indicates the presence of heart disease based on an angiographic test, while No means no heart disease. There are 13 predictors including Age, Sex, Chol (a cholesterol measurement), and other heart and lung function measurements.
+
+## Question 3 (a)
+For AHD as a binary outcome, fit a generalized additive model with a smoothing spline for age as predictors. and choose the smoothing parameter by comparing an estimate of in-sample error (e.g. AIC).
+
+Plot the relationship of the predictor with the smoothing spline with the chosen smoothing parameter. Include standard errors in the plot. 
+
+Print the summary of the GAM model. Compare the interpretation of your chosen GAM model with that of a logistic regression model with 3rd degree polynomials (including linear, quadratic and cubic terms) for age as the predictor.
+```{r, warning=FALSE}
+# load library and data
+library(gam)
+library(mgcv)
+heart <- read.csv("heart.csv")
+
+# convert AHD into binary outcome
+heart$AHD <- ifelse(heart$AHD == "Yes", 1, 0)
+
+# fit gam with smoothing spline for age
+gam_age <- gam(AHD ~ s(Age), data = heart, family = binomial)
+
+# plot relationship of predictor with smoothing spline
+plot(gam_age, select = 1, se = TRUE)
+
+# summary of model
+summary(gam_age)
+
+# fit logistic regression model with 3rd degree polynomials for age
+logit <- glm(AHD ~ poly(Age,3), data = heart, family = binomial)
+
+# summary of model
+summary(logit)
+```
+
+
+**Interpretation: **
+
+Based on the GAM model utilizing a smoothing spline for age, the significance of the smooth term for age is significant (p-value = 0.00345). This suggests that the relationship between age and the likelihood of developing heart disease (AHD) may not follow a linear pattern. The calculated spline curve offers a flexible representation of this relationship, providing a more versatile illustration.
+
+The logistic regression model with third-degree polynomials calculates the coefficients for the linear, quadratic, and cubic age terms. These coefficients determine the impact of each term on the log-odds of developing heart disease. The coefficient estimates reveal a significant linear association with age, as indicated by the significant p-value (p = 0.00016) for the linear term. However, the quadratic and cubic terms do not reach statistical significance at conventional levels (p > 0.05).
+
+## Question 3 (b)
+Do the same as in (a) with the predictor Cholesterol independently of age.
+```{r, warning=FALSE}
+# fit gam with smoothing spline for cholesterol
+gam_chol <- gam(AHD ~ s(Chol), data = heart, family = binomial)
+
+# plot relationship of predictor with smoothing spline
+plot(gam_chol, select = 1, se = TRUE)
+
+# summary of model
+summary(gam_chol)
+```
+
+**Interpretation: **
+
+The smoothing spline approach in the Generalized Additive Model reveals a non-linear correlation between cholesterol levels and the likelihood of heart disease. This method offers a more adaptable fit compared to the logistic regression model that employs 3rd-degree polynomials to analyze cholesterol.
+
+## Question 3 (c)
+With the chosen smoothing parameter in (a) and (b), fit two models - one with a smoothing spline of age only and another with smoothing splines of age and cholesterol. Compare the two models statistically with an Chi-square test.
+```{r}
+# fit gam with smoothing splines for age and chol
+gam_age_chol <- gam(AHD ~ s(Age) + s(Chol), data = heart, family = binomial)
+
+# Chi-square test comparing the two models
+anova(gam_age, gam_age_chol, test = "Chisq")
+```
+
+**Interpretation: **
+
+Since the p-value of anova test is 0.1352 > 0.05, the null hypothesis should not be rejected and the thus the model with a smoothing spline of age only and another with smoothing splines of age and cholesterol do not have significantly difference.

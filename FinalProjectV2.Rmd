@@ -1,0 +1,344 @@
+---
+title: "Final Project"
+author: "Ziwen Zhang"
+date: "2023-07-29"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    fig_height: 6.5
+    fig_width: 9.5
+---
+
+## Background:
+
+The data set is a simulated data set. It represents the data on COVID+ patients (i.e. patients diagnosed with COVID) who were hospitalized in the New York Presbyterian hospital (Weill Cornell and Lower Manhattan campus). Some COVID+ patients suffer from acute respiratory distress and have acute difficulties in breathing. Such critically ill patients then require artificial respiratory support through an invasive mechanical ventilator, a process known as intubation. Since there was a surge in COVID+ cases in New York City during the period of March, the hospital authorities were concerned that there might be a shortage in availability of mechanical ventilators. The authorities wanted to predict the need for intubation for each patient in order to better manage their resources. Your goal is to build a predictive model that will predict the outcome of intubation within 5 days of hospitalization.
+
+### load libraries
+```{r, warning=FALSE}
+# load libraries
+library(tidyverse)
+library(ggplot2)
+library(timetk)
+library(lubridate)
+library(timeDate)
+```
+### load datasets
+In this step, we load the datasets, rename the variables and change the datatypes for the following analysis. Since the outcome variable "event" is binary, we need to recode it as Yes - 1, No - 0.
+```{r}
+# load datasets
+baselines <- read.csv("baselines.csv")
+vitals <- read.csv("lab and vitals.csv")
+
+# rename the variables
+names(baselines)
+baselines <- baselines %>%
+  rename("subject" = "mrn", 
+         "age" = "Age", 
+         "sex" = "sex.factor", 
+         "hypoxia_ed" = "hypoxia_ed.factor", 
+         "diabetes_mellitus" = "dm.factor", 
+         "hypertension" = "htn.factor", 
+         "pulmonary_disease_COPD" = "pulm___1.factor", 
+         "renal_disease_CKD" = "renal___1.factor", 
+         "renal_disease_ESRD" = "renal___2.factor", 
+         "coronary_artery_disease" = "cad.factor", 
+         "symptoms_fever" = "symptoms___1.factor", 
+         "symptoms_cough" = "symptoms___2.factor", 
+         "symptoms_diarrhea" = "symptoms___10.factor", 
+         "symptoms_nausea" = "symptoms___9.factor", 
+         "symptoms_myalgias" = "symptoms___8.factor", 
+         "symptoms_dyspnea" = "symptoms___3.factor", 
+         "chest_xray_clear" = "first_cxr_results___0.factor",
+         "chest_xray_unilateral_infiltrate" = "first_cxr_results___1.factor", 
+         "chest_xray_bilateral_infiltrate" = "first_cxr_results___2.factor", 
+         "chest_xray_pleural_effusion" = "first_cxr_results___3.factor")
+
+# check datatype
+baselines <- baselines %>%
+  mutate(sex = as.factor(sex), 
+         hypoxia_ed = as.factor(hypoxia_ed), 
+         smoke_vape = as.factor(smoke_vape), 
+         diabetes_mellitus = as.factor(diabetes_mellitus), 
+         hypertension = as.factor(hypertension), 
+         pulmonary_disease_COPD = as.factor(pulmonary_disease_COPD), 
+         renal_disease_CKD = as.factor(renal_disease_CKD), 
+         renal_disease_ESRD = as.factor(renal_disease_ESRD), 
+         coronary_artery_disease = as.factor(coronary_artery_disease), 
+         cancer = as.factor(cancer), 
+         any_immunosuppression = as.factor(any_immunosuppression), 
+         symptoms_fever = as.factor(symptoms_fever), 
+         symptoms_cough = as.factor(symptoms_cough), 
+         symptoms_diarrhea = as.factor(symptoms_diarrhea), 
+         symptoms_nausea = as.factor(symptoms_nausea), 
+         symptoms_myalgias = as.factor(symptoms_myalgias), 
+         symptoms_dyspnea = as.factor(symptoms_dyspnea), 
+         chest_xray_clear = as.factor(chest_xray_clear), 
+         chest_xray_unilateral_infiltrate = as.factor(chest_xray_unilateral_infiltrate), 
+         chest_xray_bilateral_infiltrate = as.factor(chest_xray_bilateral_infiltrate), 
+         chest_xray_pleural_effusion = as.factor(chest_xray_pleural_effusion), 
+         Ed_before_order_set = as.factor(Ed_before_order_set), 
+         event = as.factor(event))
+
+#str(baselines)
+
+# change target into 0-1
+baselines$event <- ifelse(baselines$event == "Yes", 1, 0)
+```
+
+
+## Feature Engineering
+Extract features from the longitudinal vital signs measure so that you have one value for patient.
+
+### explore longitudinal vital signs data set
+In this step, we need to change the time stamp into date time format and check the unique values in "name" column, as well as the percentage of missing values in each category. This missing value will be ignored if the percentage is low in the following analysis, otherwise, we need to add missing data imputation before building some machine learning models.
+```{r}
+# check unique values in column "name"
+unique(vitals$name)
+
+# check unique subject numbers in vitals data set - 1502
+num_vitals <- vitals %>%
+  distinct(subject) %>%
+  n_distinct()
+paste("The number of unique subjects is ", num_vitals)
+
+# check missing percent
+missing_percent <- colMeans(is.na(vitals))
+missing_percent
+```
+According to the output, the missing value only occurs in the category "value" and the percentage is about 12.12% and will be ignored for the following analysis.
+
+### Data Visualization
+This step is to draw some plots to inform some features used for the following analysis.
+
+#### plot by time order
+```{r, warning=FALSE}
+# One Sample: subject - 89920960 and name - s_bp_noninvasive (d)
+sample <- vitals %>%
+  filter(subject == 89920960, name == "s_bp_noninvasive (d)") %>%
+  mutate(time_order = row_number())
+
+# plot by time_order
+ggplot(sample, aes(x = time_order, y = value)) +
+  geom_point() + 
+  geom_line() + 
+  labs(title = "Time Series Plot (one sample) - by Time Order",
+       x = "Timestamp",
+       y = "Value")
+```
+
+#### plot by day
+```{r, warning=FALSE}
+# One Sample: subject - 89920960 and name - s_bp_noninvasive (d)
+sample <- vitals %>%
+  filter(subject == 89920960, name == "s_bp_noninvasive (d)") %>%
+  mutate(time_byday = as.Date(time_stamp)) %>%
+  mutate(time_order = row_number())
+
+# plot by Day
+ggplot(sample, aes(x = time_byday, y = value)) +
+  geom_point() + 
+  geom_line() + 
+  labs(title = "Time Series Plot (one sample) - by Day",
+       x = "Timestamp",
+       y = "Value")
+```
+
+From these plots, we can see that the value fluctuated with time and the data distribution by day. Thus we consider to add statistical features such as mean value, standard deviation, and medium of values for each subject per day. This format of time (as Date) do not miss the general trend of time series. In addition, we can add trend features to capture the underlying long-term movement or behavior in the data. In this case, we do not consider seasonality trend since the time duration is short. 
+
+#### distribution plot
+```{r}
+name1 <- vitals %>% filter(name == "s_bp_noninvasive (d)")
+name2 <- vitals %>% filter(name == "vs_bp_noninvasive (s)")
+name3 <- vitals %>% filter(name == "vs_hr_hr")
+name4 <- vitals %>% filter(name == "xp_resp_rate_pt")
+name5 <- vitals %>% filter(name == "xp_resp_spo2")
+par(mfrow = c(3, 2))
+hist(name1$value, main = "Distribution of s_bp_noninvasive (d)", xlab = "value")
+hist(name2$value, main = "Distribution of vs_bp_noninvasive (s)", xlab = "value")
+hist(name3$value, main = "vs_hr_hr", xlab = "value")
+hist(name4$value, main = "xp_resp_rate_pt", xlab = "value")
+hist(name5$value, main = "xp_resp_spo2", xlab = "value")
+```
+
+From these plots, we can see that the distribution of each name category seems to be symmetric and normal shaped. Skewness and Kurtosis features are valuable descriptive statistics that helps to understand the shape and distribution of data, such as whether the distribution is symmetric and the presence of outliers. Therefore, we will add skewness and kurtosis features in the following analysis since our data seems fulfill the requirement of normalization.
+
+### add features
+```{r, warning=FALSE}
+# change time_stamp to Date format
+vitals$time_stamp <- as.Date(vitals$time_stamp)
+
+# calculate statistical features for each patient per day
+vital_features <- vitals %>%
+  na.omit() %>%
+  group_by(subject, time_stamp, name) %>%
+  summarise(
+    mean_value = mean(value, na.rm = TRUE), 
+    sd_value = sd(value, na.rm = TRUE), 
+    median_value = median(value, na.rm = TRUE)
+    )
+
+# create skewness and kurtosis features for each patient
+skewness_feature <- vitals %>%
+  na.omit() %>%
+  group_by(subject, name) %>%
+  summarise(
+    skewness = skewness(value, na.rm = TRUE)
+  )
+
+kurtosis_feature <- vitals %>%
+  na.omit() %>%
+  group_by(subject, name) %>%
+  summarise(
+    kurtosis = kurtosis(value, na.rm = TRUE)
+  )
+
+# change to wider to generate unique rows
+skewness_wider <- skewness_feature %>%
+  select(subject, name, skewness) %>%
+  unique() %>%
+  pivot_wider(names_from = name, values_from = skewness)
+
+kurtosis_wider <- kurtosis_feature %>%
+  select(subject, name, kurtosis) %>%
+  unique() %>%
+  pivot_wider(names_from = name, values_from = kurtosis)
+
+
+# create trend feature for each patient
+time_order <- vital_features %>%
+  arrange(time_stamp) %>% # order by time
+  mutate(order = row_number()) %>% # add time order
+  group_by(subject) %>%
+  mutate(trend = cor(order, mean_value)) # add trend feature
+
+# change to wider to generate unique rows
+time_order_wider <- time_order %>%
+  select(subject, name, trend) %>%
+  unique() %>% # keep the unique combinations of subject, name, trend - collapse into a single row
+  pivot_wider(names_from = name, values_from = trend) # pivot to wider
+
+# combine features and baseline
+final_data <- left_join(baselines, time_order_wider, by = "subject")
+final_data <- left_join(final_data, skewness_wider, by = "subject")
+final_data <- left_join(final_data, kurtosis_wider, by = "subject")
+```
+
+## Predictive Modeling
+Using all baseline variables and features extracted from labs and vitals, your goal is to build a predictive model predicting the binary event of intubation within 5 days of hospitalization. You can use various learning methods for prediction and you need to compare the prediction error of the models. You need to provide detailed explanations of the steps you have taken to tune your models, estimate and compare prediction error. Finally, you have to choose a final model that you will present to the authorities and explain the prediction model the best you can to the authorities so that they understand factors are important for prediction.
+
+#### split data into traning and testing dataset
+```{r, warning=FALSE}
+# str(final_data)
+set.seed(234)
+library(caret)
+
+# delete column "subject" 
+final_data <- final_data %>%
+  select(-subject)
+
+# create training index
+train_index <- createDataPartition(final_data$event, p = 0.7, list = FALSE)
+
+# Split the data into training and testing sets
+training_data <- final_data[train_index, ]
+testing_data <- final_data[-train_index, ]
+```
+
+### Logistic Regression
+Logistic Regression can be used for binary classification task.
+```{r, warning=FALSE}
+library(glmnet)
+
+# fit model
+logit_model <- glm(event ~ ., data = training_data, family = binomial)
+
+# print summary
+summary(logit_model)
+
+# predict on testing data
+predicted_probs <- predict(logit_model, newdata = testing_data, type = "response")
+
+# convert to binary predictions 
+predicted_classes <- ifelse(predicted_probs >= 0.5, 1, 0)
+
+# Calculate the miss-classification error on the testing data
+misclassification_error <- mean(predicted_classes != testing_data$event) %>% round(4)
+paste("The miss-classification error of logistic model is ", misclassification_error)
+```
+
+### Support Vector Machine
+SVM can be used for binary classification with non-linear relationship.
+```{r}
+library(e1071)
+
+# separate the predictors and outcome variable
+X_train <- training_data[, -which(names(training_data) == "event")]
+y_train <- training_data$event
+X_test <- testing_data[, -which(names(testing_data) == "event")]
+y_test <- testing_data$event
+
+# fit svm model with cross-validation
+svm_linear <- tune(svm, event ~ ., data = training_data, kernel = "linear", ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10)) )
+# extract best cost
+best_cost_linear <- svm_linear$best.parameters$cost
+paste("The best cost for linear svm is ", best_cost_linear)
+
+# fit svm model with best cost
+svm_model <- svm(event ~ ., data = training_data, kernel = "linear", cost = best_cost_linear, gamma = 2)
+
+# predict on test data
+predicted_probs <- predict(svm_model, X_test, probability = TRUE)
+
+# convert to binary predictions 
+predicted_classes <- ifelse(predicted_probs >= 0.5, 1, 0)
+
+# Calculate the miss-classification error on the testing data
+misclassification_error <- mean(predicted_classes != y_test) %>% round(4)
+paste("The miss-classification error of svm model is ", misclassification_error)
+```
+
+### Stepwise Selection Model
+Stepwise Selection Model can be used to select a subset of features to reduce model complexity.
+```{r, warning=FALSE}
+# fit a stepwise regression model
+stepwise_model <- glm(event ~ ., data = training_data, family = "binomial")
+
+regfit.fwd <- step(stepwise_model, direction = "forward", trace = F)
+summary(regfit.fwd)
+
+# make predictions on testing data 
+pred_label_fwd <- ifelse(predict(regfit.fwd, newdata = testing_data, type = "response") > 0.5, 1, 0)
+
+# Calculate the miss-classification error on the testing data
+misclassification_error <- mean(pred_label_fwd != y_test) %>% round(4)
+paste("The miss-classification error of forward selection model is ", misclassification_error)
+```
+
+
+### Lasso Regression
+LASSO regression incorporates regularizartion to improve the model's performance and feature selection.
+```{r}
+# separate the predictors and label
+x <- model.matrix(event ~., training_data)[,-1] # remove the first column - subject
+y <- training_data$event
+x_test <- model.matrix(event ~., testing_data)[,-1]
+
+# fit model
+lambda_lasso <- cv.glmnet(x, y, family = "binomial", nfolds = 10, alpha = 1)
+regfit.lasso <- glmnet(x, y, family = "binomial", alpha = 1, lambda = lambda_lasso$lambda.min)
+coef(regfit.lasso)
+
+# predict on test data
+pred_label_lasso <- ifelse(predict(regfit.lasso, newx = as.matrix(x_test), type = "response") > 0.5, 1, 0)
+
+# Calculate the miss-classification error on the testing data
+misclassification_error <- mean(pred_label_lasso != y_test) %>% round(4)
+paste("The miss-classification error of LASSO model is ", misclassification_error)
+```
+
+## Conclusion:
+By fitting predictive models including Logistic Regression, Support Vector Machine, Stepwise Selection Model and Lasso Regression with cross validation. The miss classification error of LASSO Regression is the smallest, which is 0.2506, indicating that this model has the best performance on predicting the binary event outcome. 
+
+And the effective biomarkers from baselines include: age, sex, bmi, smoke_vape, diabetes_mellitus, pulmonary_disease_COPD, renal_disease_CKD, cancer, any_immunosuppression, symptoms_fever, symptoms_nausea, symptoms_myalgias, chest_xray_clear,  chest_xray_bilateral_infiltrate, chest_xray_pleural_effusion, duration_symptoms and Ed_before_order_se.
